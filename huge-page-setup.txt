@@ -1,0 +1,321 @@
+I am using libhugetlbfs to simplify the huge pages allocation for the process and I am using STREAM as a benchmark. The performance analysis is in step 11
+
+set up
+1. git clone https://github.com/libhugetlbfs/libhugetlbfs.git
+
+2. make && make install PREFIX=/usr/local
+
+3. mount a hugetlbfs: sudo mount -t hugetlbfs none /mnt/hugetlbfs
+
+4. verify mount: mount | grep hugetlbfs
+----------------------------------------------------
+nodev on /mnt/huge type hugetlbfs (rw,relatime,pagesize=2M)
+none on /mnt/hugetlbfs type hugetlbfs (rw,relatime,pagesize=2M)
+----------------------------------------------------
+
+5. allocate huge pages: 
+    $ hugeadm --create-global-mounts
+    $ hugeadm --pool-pages-max DEFAULT:8G 
+    $ hugeadm --set-recommended-min_free_kbytes
+    $ hugeadm --set-recommended-shmmax
+    $ hugeadm --pool-pages-min DEFAULT:2048MB
+    $ hugeadm --pool-pages-max DEFAULT:8192MB
+
+6. check allocation: cat /proc/meminfo | grep Huge
+---------------------------------------------------- 
+AnonHugePages:    520192 kB
+ShmemHugePages:        0 kB
+FileHugePages:         0 kB
+HugePages_Total:    1024
+HugePages_Free:     1024
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:         2097152 kB
+----------------------------------------------------
+
+7. get STREAM benchmark: https://www.cs.virginia.edu/stream/
+
+
+NOTE: PERF stat -e tlb-load-misses,tlb-store-misses hugectl --text --data --no-preload ./stream cannot be used since Windows use its custom Linux Kernel for wsl2 and some events like cache-misses are not supported
+
+Therefore, I use valgrind --tool=cachegrind ./stream but it seems to be inaccurate
+
+11. Performance Analysis
+
+
+
+
+
+
+
+with huge page:
+	export PREFIX=/usr/local
+	export HUGETLB_MORECORE=yes
+	export HUGETLB_VERBOSE=99
+	export HUGETLB_DEBUG=3
+	export LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64
+	watch -n1 "cat /proc/meminfo  | grep huge -i"
+
+	gcc -B $PREFIX/share/libhugetlbfs -Wl,--hugetlbfs-align -no-pie -Wl,--no-as-needed -DSTREAM_ARRAY_SIZE=80000000 -DOFFSET=0 stream.c -o stream -lhugetlbfs
+	HUGETLB_VERBOSE=99 HUGETLB_DEBUG=3 HUGETLB_ELFMAP=W && time hugectl --data --bss --no-preload ./stream
+
+
+----------------------------------------------------
+-DSTREAM_ARRAY_SIZE=80000000 -DOFFSET=0 
+time:
+real    0m8.269s
+user    0m8.170s
+sys     0m0.100s
+
+hugepage used:
+AnonHugePages:     36864 kB
+ShmemHugePages:        0 kB
+FileHugePages:         0 kB
+HugePages_Total:    1024
+HugePages_Free:      105
+HugePages_Rsvd:        1
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:         2097152 kB
+
+
+
+----------------------------------------------------
+
+----------------------------------------------------
+-DSTREAM_ARRAY_SIZE=10000000 -DOFFSET=0 
+time:
+real    0m0.881s
+user    0m0.852s
+sys     0m0.030s
+
+hugepage used:
+ShmemHugePages:        0 kB
+FileHugePages:         0 kB
+HugePages_Total:    1024
+HugePages_Free:      906
+HugePages_Rsvd:        1
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:         2097152 kB
+
+==1465== I   refs:      6,440,334,723
+==1465== I1  misses:            1,670
+==1465== LLi misses:            1,637
+==1465== I1  miss rate:          0.00%
+==1465== LLi miss rate:          0.00%
+==1465== 
+==1465== D   refs:      3,420,107,474  (2,950,079,396 rd   + 470,028,078 wr)
+==1465== D1  misses:      133,754,375  (   80,003,375 rd   +  53,751,000 wr)
+==1465== LLd misses:      133,753,641  (   80,002,742 rd   +  53,750,899 wr)
+==1465== D1  miss rate:           3.9% (          2.7%     +        11.4%  )
+==1465== LLd miss rate:           3.9% (          2.7%     +        11.4%  )
+==1465== 
+==1465== LL refs:         133,756,045  (   80,005,045 rd   +  53,751,000 wr)
+==1465== LL misses:       133,755,278  (   80,004,379 rd   +  53,750,899 wr)
+==1465== LL miss rate:            1.4% (          0.9%     +        11.4%  )
+----------------------------------------------------
+-DSTREAM_ARRAY_SIZE=40000000 -DOFFSET=0 
+
+real    0m3.749s
+user    0m3.669s
+sys     0m0.080s
+
+AnonHugePages:     36864 kB
+ShmemHugePages:        0 kB
+FileHugePages:         0 kB
+HugePages_Total:    1024
+HugePages_Free:      563
+HugePages_Rsvd:        1
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:         2097152 kB
+
+==3307== 
+==3307== I   refs:      25,760,335,104
+==3307== I1  misses:             1,651
+==3307== LLi misses:             1,632
+==3307== I1  miss rate:           0.00%
+==3307== LLi miss rate:           0.00%
+==3307== 
+==3307== D   refs:      13,680,108,033  (11,800,079,747 rd   + 1,880,028,286 wr)
+==3307== D1  misses:       535,004,375  (   320,003,375 rd   +   215,001,000 wr)
+==3307== LLd misses:       535,003,641  (   320,002,742 rd   +   215,000,899 wr)
+==3307== D1  miss rate:            3.9% (           2.7%     +          11.4%  )
+==3307== LLd miss rate:            3.9% (           2.7%     +          11.4%  )
+==3307== 
+==3307== LL refs:          535,006,026  (   320,005,026 rd   +   215,001,000 wr)
+==3307== LL misses:        535,005,273  (   320,004,374 rd   +   215,000,899 wr)
+==3307== LL miss rate:             1.4% (           0.9%     +          11.4%  )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+without huge page:
+	echo never | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
+	gcc -DSTREAM_ARRAY_SIZE=80000000 -DOFFSET=0 stream.c -o stream && time ./stream
+----------------------------------------------------
+-DSTREAM_ARRAY_SIZE=80000000 -DOFFSET=0 
+time:
+real    0m8.830s
+user    0m8.030s
+sys     0m0.800s
+
+hugepage used:
+AnonHugePages:     36864 kB
+ShmemHugePages:        0 kB
+FileHugePages:         0 kB
+HugePages_Total:    1024
+HugePages_Free:     1024
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:         2097152 kB
+
+----------------------------------------------------
+-DSTREAM_ARRAY_SIZE=10000000 -DOFFSET=0 
+time:
+real    0m1.085s
+user    0m1.005s
+sys     0m0.080s
+
+hugepage used:
+ShmemHugePages:        0 kB
+FileHugePages:         0 kB
+HugePages_Total:    1024
+HugePages_Free:     1024
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:         2097152 kB
+
+==2314== 
+==2314== I   refs:      6,440,281,595
+==2314== I1  misses:            1,415
+==2314== LLi misses:            1,389
+==2314== I1  miss rate:          0.00%
+==2314== LLi miss rate:          0.00%
+==2314== 
+==2314== D   refs:      3,420,086,346  (2,950,064,185 rd   + 470,022,161 wr)
+==2314== D1  misses:      133,753,746  (   80,002,923 rd   +  53,750,823 wr)
+==2314== LLd misses:      133,753,287  (   80,002,520 rd   +  53,750,767 wr)
+==2314== D1  miss rate:           3.9% (          2.7%     +        11.4%  )
+==2314== LLd miss rate:           3.9% (          2.7%     +        11.4%  )
+==2314== 
+==2314== LL refs:         133,755,161  (   80,004,338 rd   +  53,750,823 wr)
+==2314== LL misses:       133,754,676  (   80,003,909 rd   +  53,750,767 wr)
+==2314== LL miss rate:            1.4% (          0.9%     +        11.4%  )
+
+----------------------------------------------------
+-DSTREAM_ARRAY_SIZE=40000000 -DOFFSET=0 
+
+real    0m4.811s
+user    0m4.551s
+sys     0m0.261s
+
+hugepage used:
+ShmemHugePages:        0 kB
+FileHugePages:         0 kB
+HugePages_Total:    1024
+HugePages_Free:     1024
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:         2097152 kB
+
+==5450== 
+==5450== I   refs:      25,760,281,712
+==5450== I1  misses:             1,395
+==5450== LLi misses:             1,383
+==5450== I1  miss rate:           0.00%
+==5450== LLi miss rate:           0.00%
+==5450== 
+==5450== D   refs:      13,680,086,805  (11,800,064,466 rd   + 1,880,022,339 wr)
+==5450== D1  misses:       535,003,746  (   320,002,923 rd   +   215,000,823 wr)
+==5450== LLd misses:       535,003,287  (   320,002,520 rd   +   215,000,767 wr)
+==5450== D1  miss rate:            3.9% (           2.7%     +          11.4%  )
+==5450== LLd miss rate:            3.9% (           2.7%     +          11.4%  )
+==5450== 
+==5450== LL refs:          535,005,141  (   320,004,318 rd   +   215,000,823 wr)
+==5450== LL misses:        535,004,670  (   320,003,903 rd   +   215,000,767 wr)
+==5450== LL miss rate:             1.4% (           0.9%     +          11.4%  )
+
+
+
+
+
+
+
+use thp
+echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
+----------------------------------------------------
+DSTREAM_ARRAY_SIZE=80000000 -DOFFSET=0 
+
+time: 
+real    0m8.424s
+user    0m8.033s
+sys     0m0.391s
+
+AnonHugePages:   1918976 kB
+ShmemHugePages:        0 kB
+FileHugePages:         0 kB
+HugePages_Total:       0
+HugePages_Free:        0
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:               0 kB
+
+----------------------------------------------------
+DSTREAM_ARRAY_SIZE=40000000 -DOFFSET=0 
+
+time:
+real    0m4.562s
+user    0m4.432s
+sys     0m0.130s
+
+AnonHugePages:    989184 kB
+ShmemHugePages:        0 kB
+FileHugePages:         0 kB
+HugePages_Total:       0
+HugePages_Free:        0
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:               0 kB
+
+----------------------------------------------------
+DSTREAM_ARRAY_SIZE=1000000 -DOFFSET=0 
+
+time:
+real    0m1.174s
+user    0m1.123s
+sys     0m0.051s
+
+AnonHugePages:    194560 kB
+ShmemHugePages:        0 kB
+FileHugePages:         0 kB
+HugePages_Total:       0
+HugePages_Free:        0
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:               0 kB
+
+
+
